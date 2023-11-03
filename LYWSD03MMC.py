@@ -44,9 +44,11 @@ class Measurement:
 	rssi: int = 0 
 
 	def __eq__(self, other): #rssi may be different, so exclude it from comparison
-		if self.temperature == other.temperature and self.humidity == other.humidity and self.calibratedHumidity == other.calibratedHumidity and self.battery == other.battery and self.sensorname == other.sensorname:
+		# if not self.isLite and self.temperature == other.temperature and self.humidity == other.humidity and self.calibratedHumidity == other.calibratedHumidity and self.battery == other.battery and self.sensorname == other.sensorname:
 			#in passive mode also exclude voltage as it changes often due to frequent measurements
-			return True if args.passive else (self.voltage == other.voltage)
+			# return True if args.passive else (self.voltage == other.voltage)
+		if round(self.temperature, 0) == round(other.temperature, 0) and self.humidity == other.humidity and self.sensorname == other.sensorname:
+			return True
 		else:
 			return False
 
@@ -126,22 +128,35 @@ def thread_SendingData():
 
 			if invokeCallback:
 
+				# if args.callback:
+				# 	fmt = "sensorname,temperature,humidity,voltage" #don't try to separate by semicolon ';' os.system will use that as command separator
+				# 	if ' ' in mea.sensorname:
+				# 		sensorname = '"' + mea.sensorname + '"'
+				# 	else:
+				# 		sensorname = mea.sensorname
+				# 	params = sensorname + " " + str(mea.temperature) + " " + str(mea.humidity) + " " + str(mea.voltage)
+				# 	if (args.TwoPointCalibration or args.offset): #would be more efficient to generate fmt only once
+				# 		fmt +=",humidityCalibrated"
+				# 		params += " " + str(mea.calibratedHumidity)
+				# 	if (args.battery):
+				# 		fmt +=",batteryLevel"
+				# 		params += " " + str(mea.battery)
+				# 	if (args.rssi):
+				# 		fmt +=",rssi"
+				# 		params += " " + str(mea.rssi)
+				# 	params += " " + str(mea.timestamp)
+				# 	fmt +=",timestamp"
+				# 	cmd = path + "/" + args.callback + " " + fmt + " " + params
+				# 	print(cmd)
+				# 	ret = os.system(cmd)
+
 				if args.callback:
-					fmt = "sensorname,temperature,humidity,voltage" #don't try to separate by semicolon ';' os.system will use that as command separator
+					fmt = "sensorname,temperature,humidity" #don't try to separate by semicolon ';' os.system will use that as command separator
 					if ' ' in mea.sensorname:
 						sensorname = '"' + mea.sensorname + '"'
 					else:
 						sensorname = mea.sensorname
-					params = sensorname + " " + str(mea.temperature) + " " + str(mea.humidity) + " " + str(mea.voltage)
-					if (args.TwoPointCalibration or args.offset): #would be more efficient to generate fmt only once
-						fmt +=",humidityCalibrated"
-						params += " " + str(mea.calibratedHumidity)
-					if (args.battery):
-						fmt +=",batteryLevel"
-						params += " " + str(mea.battery)
-					if (args.rssi):
-						fmt +=",rssi"
-						params += " " + str(mea.rssi)
+					params = sensorname + " " + str(mea.temperature) + " " + str(mea.humidity)
 					params += " " + str(mea.timestamp)
 					fmt +=",timestamp"
 					cmd = path + "/" + args.callback + " " + fmt + " " + params
@@ -242,24 +257,7 @@ class MyDelegate(btle.DefaultDelegate):
 				#print("Temperature unrounded: " + str(temp
 				
 				if args.debounce:
-					global mode
-					temp*=10
-					intpart = math.floor(temp)
-					fracpart = round(temp - intpart,1)
-					#print("Fracpart: " + str(fracpart))
-					if fracpart >= 0.7:
-						mode="ceil"
-					elif fracpart <= 0.2: #either 0.8 and 0.3 or 0.7 and 0.2 for best even distribution
-						mode="trunc"
-					#print("Modus: " + mode)
-					if mode=="trunc": #only a few times
-						temp=math.trunc(temp)
-					elif mode=="ceil":
-						temp=math.ceil(temp)
-					else:
-						temp=round(temp,0)
-					temp /=10.
-					#print("Debounced temp: " + str(temp))
+					temp = debounce(temp)
 				else:
 					temp=round(temp,1)
 			humidity=int.from_bytes(data[2:3],byteorder='little')
@@ -305,6 +303,31 @@ class MyDelegate(btle.DefaultDelegate):
 			print(traceback.format_exc())
 		
 # Initialisation  -------
+
+
+def debounce(measurement):
+	if measurement == 0:
+		return None
+	temp = measurement / 10.
+	intpart = math.floor(temp)
+	# print("Intpart: " + str(intpart))
+	fracpart = round(temp - intpart,1)
+	# print("Fracpart: " + str(fracpart))
+	mode = "round"
+	if fracpart >= 0.7:
+		mode="ceil"
+	elif fracpart <= 0.2: #either 0.8 and 0.3 or 0.7 and 0.2 for best even distribution
+		mode="trunc"
+	# print("Modus: " + mode)
+	if mode=="trunc": #only a few times
+		temp=math.trunc(temp)
+	elif mode=="ceil":
+		temp=math.ceil(temp)
+	else:
+		temp=round(temp,0)
+	# print("Debounced temp: " + str(temp))
+	return temp
+
 
 def connect():
 	#print("Interface: " + str(args.interface))
@@ -707,8 +730,8 @@ elif args.passive:
 
 			if(dataIdentifier == "0D") and not args.onlydevicelist or (dataIdentifier == "0D" and mac in sensors) and len(strippedData_str) == 28:
 				print("BLE packet - lywsdcgq 0D: %s %02x %s %d" % (mac, adv_type, data_str, rssi))
-				temperature = int.from_bytes(bytearray.fromhex(strippedData_str[20:24]),byteorder='little',signed=True) / 10.
-				humidity = int.from_bytes(bytearray.fromhex(strippedData_str[24:28]),byteorder='little',signed=True) / 10.
+				temperature = debounce(int.from_bytes(bytearray.fromhex(strippedData_str[20:24]),byteorder='little',signed=True))
+				humidity = debounce(int.from_bytes(bytearray.fromhex(strippedData_str[24:28]),byteorder='little',signed=True))
 
 				measurement.humidity = humidity
 				measurement.temperature = temperature
@@ -721,7 +744,7 @@ elif args.passive:
 
 				measurement.humidity = humidity
 				measurement.rssi = rssi
-				return measurement
+				return None
 
 			elif(dataIdentifier == "04") and not args.onlydevicelist or (dataIdentifier == "04" and mac in sensors) and len(strippedData_str) == 24:
 				print("BLE packet - lywsdcgq 04: %s %02x %s %d" % (mac, adv_type, data_str, rssi))
@@ -729,7 +752,7 @@ elif args.passive:
 
 				measurement.temperature = temperature
 				measurement.rssi = rssi
-				return measurement
+				return None
 
 			elif(dataIdentifier == "0A") and not args.onlydevicelist or (dataIdentifier == "0A" and mac in sensors) and len(strippedData_str) == 22:
 				print("BLE packet - lywsdcgq 0A: %s %02x %s %d" % (mac, adv_type, data_str, rssi))
@@ -737,7 +760,7 @@ elif args.passive:
 
 				measurement.battery = batteryPercent
 				measurement.rssi = rssi
-				return measurement
+				return None
 
 		# Tested with Qingping CGG1 and CGDK2
 		def decode_data_qingping(mac, adv_type, data_str, rssi, measurement):
